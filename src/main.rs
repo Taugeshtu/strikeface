@@ -1,8 +1,11 @@
+mod auth;
 mod clock;
+pub mod pam;
+pub mod scrambler;
 
 use std::{
     io::{self, stdout},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use chrono::{Local, Timelike};
@@ -33,7 +36,6 @@ enum FocusedField {
 
 enum AuthState {
     Idle,
-    ErrorFlash(Instant),
     Success,
 }
 
@@ -43,38 +45,71 @@ struct App {
     focused: FocusedField,
     state: AuthState,
     time_offset_minutes: i64,
+    session: Option<String>,
 }
 
 impl App {
-    fn new() -> Self {
+    fn new(user: String, session: Option<String>) -> Self {
         Self {
-            username: "tau".to_string(),
+            username: user,
             password: String::new(),
             focused: FocusedField::Password,
             state: AuthState::Idle,
             time_offset_minutes: 0,
+            session,
         }
     }
 }
 
 fn main() -> io::Result<()> {
+    let mut session = None;
+    let mut user = std::env::var("USER").unwrap_or_default();
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--session" => {
+                session = args.next();
+            }
+            "--user" | "-u" => {
+                if let Some(u) = args.next() {
+                    user = u;
+                }
+            }
+            _ => {}
+        }
+    }
+
     enable_raw_mode()?;
     let mut stdout = stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(
+        stdout,
+        EnterAlternateScreen,
+        crossterm::style::Print("\x1b]11;#f9f9f9\x1b\\")
+    )?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let mut app = App::new();
+    let mut app = App::new(user, session);
     let res = run_loop(&mut terminal, &mut app);
 
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    execute!(
+        terminal.backend_mut(),
+        crossterm::style::Print("\x1b]111\x1b\\"),
+        LeaveAlternateScreen
+    )?;
     terminal.show_cursor()?;
 
     if let Err(err) = res {
         eprintln!("Error: {err}");
+        std::process::exit(1);
     }
-    Ok(())
+
+    if let AuthState::Success = app.state {
+        std::process::exit(0);
+    } else {
+        std::process::exit(1);
+    }
 }
 
 fn run_loop<B: ratatui::backend::Backend>(
@@ -82,15 +117,6 @@ fn run_loop<B: ratatui::backend::Backend>(
     app: &mut App,
 ) -> io::Result<()> {
     loop {
-        // Handle error flash timeout
-        if let AuthState::ErrorFlash(start) = app.state {
-            if start.elapsed() >= Duration::from_secs(2) {
-                app.state = AuthState::Idle;
-                app.password.clear();
-                app.focused = FocusedField::Password;
-            }
-        }
-
         if let AuthState::Success = app.state {
             break Ok(());
         }
@@ -99,13 +125,9 @@ fn run_loop<B: ratatui::backend::Backend>(
             .draw(|f| ui(f, app))
             .map_err(|e| io::Error::other(e.to_string()))?;
 
-        // Poll events
-        if event::poll(Duration::from_millis(50))? {
+        // Poll events (instant on keypress, wakes up every 100ms for clock)
+        if event::poll(Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
-                // Discard inputs during full-screen error lockout
-                if let AuthState::ErrorFlash(_) = app.state {
-                    continue;
-                }
 
                 if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
                     break Ok(());
@@ -158,12 +180,60 @@ fn run_loop<B: ratatui::backend::Backend>(
                             app.focused = FocusedField::Password;
                         }
                         FocusedField::Password => {
-                            // Mock auth: password "tau" succeeds, everything else flashes red
-                            if app.password == "tau" {
-                                app.state = AuthState::Success;
-                            } else {
-                                app.state = AuthState::ErrorFlash(Instant::now());
+                            if app.password.is_empty() {
+                                continue;
                             }
+                            let service = if app.session.is_some() {
+                                "login"
+                            } else {
+                                "strikeface"
+                            }
+                            .to_string();
+                            let user = app.username.clone();
+                            let pass = app.password.clone();
+
+                            // 1. Spawn PAM check on worker thread
+                            let (tx, rx) = std::sync::mpsc::channel();
+                            std::thread::spawn(move || {
+                                let _ = tx.send(auth::verify(&service, &user, &pass));
+                            });
+
+                            // 2. Wait 150ms
+                            std::thread::sleep(Duration::from_millis(150));
+
+                            // 3. If PAM already succeeded (<150ms) -> exit clean!
+                            if let Ok(Ok(())) = rx.try_recv() {
+                                app.state = AuthState::Success;
+                                break Ok(());
+                            }
+
+                            // 4. Still waiting (PAM fail sleep active) -> GO RED!
+                            execute!(
+                                io::stdout(),
+                                crossterm::style::Print("\x1b]11;#ff004f\x1b\\")
+                            )?;
+                            terminal
+                                .draw(|f| {
+                                    let size = f.area();
+                                    f.render_widget(
+                                        Block::default().style(Style::default().bg(COLOR_RED)),
+                                        size,
+                                    );
+                                })
+                                .map_err(|e| io::Error::other(e.to_string()))?;
+
+                            // 5. Block on rx.recv() while PAM finishes sleeping out its penalty
+                            let _ = rx.recv();
+
+                            // Restore canvas background to off-white
+                            execute!(
+                                io::stdout(),
+                                crossterm::style::Print("\x1b]11;#f9f9f9\x1b\\")
+                            )?;
+
+                            // 6. Reset password and focus
+                            app.password.clear();
+                            app.focused = FocusedField::Password;
                         }
                     },
                     KeyCode::Backspace => match app.focused {
@@ -199,14 +269,7 @@ fn run_loop<B: ratatui::backend::Backend>(
 fn ui(f: &mut ratatui::Frame, app: &App) {
     let size = f.area();
 
-    // 1. Error state: full screen red
-    if let AuthState::ErrorFlash(_) = app.state {
-        let red_block = Block::default().style(Style::default().bg(COLOR_RED));
-        f.render_widget(red_block, size);
-        return;
-    }
-
-    // 2. Normal state: light parchment background
+    // 1. Normal state: light parchment background
     let bg_block = Block::default().style(Style::default().bg(COLOR_BG));
     f.render_widget(bg_block, size);
 
