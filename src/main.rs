@@ -2,6 +2,7 @@ mod auth;
 mod clock;
 pub mod pam;
 pub mod scrambler;
+mod session;
 
 use std::{
     io::{self, stdout},
@@ -106,6 +107,12 @@ fn main() -> io::Result<()> {
     }
 
     if let AuthState::Success = app.state {
+        if let Some(cmd) = app.session {
+            if let Err(err) = session::launch("login", &app.username, &app.password, &cmd) {
+                eprintln!("Session error: {err}");
+                std::process::exit(1);
+            }
+        }
         std::process::exit(0);
     } else {
         std::process::exit(1);
