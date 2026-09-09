@@ -64,6 +64,7 @@ impl App {
 
 fn main() -> io::Result<()> {
     let mut session = None;
+    let mut loop_mode = false;
     let mut user = std::env::var("USER").unwrap_or_default();
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -75,6 +76,9 @@ fn main() -> io::Result<()> {
                 if let Some(u) = args.next() {
                     user = u;
                 }
+            }
+            "--loop" => {
+                loop_mode = true;
             }
             _ => {}
         }
@@ -91,7 +95,43 @@ fn main() -> io::Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     let mut app = App::new(user, session);
-    let res = run_loop(&mut terminal, &mut app);
+    let mut final_error: Option<String> = None;
+
+    loop {
+        let res = run_loop(&mut terminal, &mut app);
+
+        if let Err(err) = res {
+            if !loop_mode {
+                final_error = Some(format!("Error: {err}"));
+                break;
+            }
+            app.password.clear();
+            app.state = AuthState::Idle;
+            app.focused = FocusedField::Password;
+            continue;
+        }
+
+        if let AuthState::Success = app.state {
+            if let Some(ref cmd) = app.session {
+                if let Err(err) = session::launch("login", &app.username, &app.password, cmd) {
+                    if !loop_mode {
+                        final_error = Some(format!("Session error: {err}"));
+                        break;
+                    }
+                }
+            }
+            if !loop_mode {
+                break;
+            }
+        } else if !loop_mode {
+            break;
+        }
+
+        // Reset for next cycle
+        app.password.clear();
+        app.state = AuthState::Idle;
+        app.focused = FocusedField::Password;
+    }
 
     disable_raw_mode()?;
     execute!(
@@ -101,18 +141,12 @@ fn main() -> io::Result<()> {
     )?;
     terminal.show_cursor()?;
 
-    if let Err(err) = res {
-        eprintln!("Error: {err}");
+    if let Some(err) = final_error {
+        eprintln!("{err}");
         std::process::exit(1);
     }
 
     if let AuthState::Success = app.state {
-        if let Some(cmd) = app.session {
-            if let Err(err) = session::launch("login", &app.username, &app.password, &cmd) {
-                eprintln!("Session error: {err}");
-                std::process::exit(1);
-            }
-        }
         std::process::exit(0);
     } else {
         std::process::exit(1);
