@@ -267,6 +267,11 @@ fn run_loop<B: ratatui::backend::Backend>(
                             // 5. Block on rx.recv() while PAM finishes sleeping out its penalty
                             let _ = rx.recv();
 
+                            // Drain all keystrokes buffered during lockout
+                            while event::poll(Duration::from_millis(0))? {
+                                let _ = event::read()?;
+                            }
+
                             // Restore canvas background to off-white
                             execute!(
                                 io::stdout(),
