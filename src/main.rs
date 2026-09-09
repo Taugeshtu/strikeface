@@ -114,6 +114,7 @@ fn main() -> io::Result<()> {
         if let AuthState::Success = app.state {
             if let Some(ref cmd) = app.session {
                 if let Err(err) = session::launch("login", &app.username, &app.password, cmd) {
+                    eprintln!("Session error: {err}");
                     if !loop_mode {
                         final_error = Some(format!("Session error: {err}"));
                         break;

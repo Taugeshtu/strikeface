@@ -63,6 +63,9 @@ pub fn launch(
     let _ = session.putenv(&format!("LOGNAME={}", user.name));
     let _ = session.putenv(&format!("HOME={}", user.dir.display()));
     let _ = session.putenv(&format!("SHELL={}", user.shell.display()));
+    let _ = session.putenv(&format!("XDG_RUNTIME_DIR=/run/user/{}", user.uid));
+    let path = std::env::var("PATH").unwrap_or_else(|_| "/run/current-system/sw/bin:/bin:/usr/bin".to_string());
+    let _ = session.putenv(&format!("PATH={}", path));
 
     session.open_session(PamFlag::NONE)?;
 
