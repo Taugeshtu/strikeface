@@ -265,7 +265,7 @@ fn run_loop<B: ratatui::backend::Backend>(
                                 .map_err(|e| io::Error::other(e.to_string()))?;
 
                             // 5. Block on rx.recv() while PAM finishes sleeping out its penalty
-                            let _ = rx.recv();
+                            let auth_res = rx.recv();
 
                             // Drain all keystrokes buffered during lockout
                             while event::poll(Duration::from_millis(0))? {
@@ -278,7 +278,12 @@ fn run_loop<B: ratatui::backend::Backend>(
                                 crossterm::style::Print("\x1b]11;#f9f9f9\x1b\\")
                             )?;
 
-                            // 6. Reset password and focus
+                            if let Ok(Ok(())) = auth_res {
+                                app.state = AuthState::Success;
+                                break Ok(());
+                            }
+
+                            // 6. PAM failed -> reset password and focus
                             app.password.clear();
                             app.focused = FocusedField::Password;
                         }
