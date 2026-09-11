@@ -71,6 +71,11 @@ pub fn launch(
     let pam_env = session.getenvlist()?;
     let env_vec = pam_env.to_vec();
 
+    let cusername = CString::new(user.name.as_str())?;
+    let csh = CString::new("/bin/sh")?;
+    let cflag = CString::new("-c")?;
+    let ccmd = CString::new(command)?;
+
     match unsafe { fork()? } {
         ForkResult::Parent { child } => {
             let _ = waitpid(child, None);
@@ -80,10 +85,18 @@ pub fn launch(
             Ok(())
         }
         ForkResult::Child => {
-            let cusername = CString::new(user.name.as_str())?;
-            let _ = initgroups(&cusername, user.gid);
-            let _ = setgid(user.gid);
-            let _ = setuid(user.uid);
+            if let Err(err) = initgroups(&cusername, user.gid) {
+                eprintln!("initgroups failed: {err}");
+                std::process::exit(1);
+            }
+            if let Err(err) = setgid(user.gid) {
+                eprintln!("setgid failed: {err}");
+                std::process::exit(1);
+            }
+            if let Err(err) = setuid(user.uid) {
+                eprintln!("setuid failed: {err}");
+                std::process::exit(1);
+            }
 
             unsafe {
                 libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM, 0, 0, 0);
@@ -91,9 +104,6 @@ pub fn launch(
 
             let _ = std::env::set_current_dir(&user.dir);
 
-            let csh = CString::new("/bin/sh")?;
-            let cflag = CString::new("-c")?;
-            let ccmd = CString::new(command)?;
             let _ = execve(&csh, &[&csh, &cflag, &ccmd], &env_vec);
             std::process::exit(1);
         }
