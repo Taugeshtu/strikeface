@@ -45,7 +45,6 @@ struct App {
     password: String,
     focused: FocusedField,
     state: AuthState,
-    time_offset_minutes: i64,
     session: Option<String>,
 }
 
@@ -56,7 +55,6 @@ impl App {
             password: String::new(),
             focused: FocusedField::Password,
             state: AuthState::Idle,
-            time_offset_minutes: 0,
             session,
         }
     }
@@ -175,40 +173,6 @@ fn run_loop<B: ratatui::backend::Backend>(
                     break Ok(());
                 }
 
-                // Global time manipulation keys (when not typing in username)
-                if app.focused != FocusedField::Username {
-                    match key.code {
-                        KeyCode::Char('+') | KeyCode::Char('=') => {
-                            app.time_offset_minutes += 1;
-                            continue;
-                        }
-                        KeyCode::Char('-') | KeyCode::Char('_') => {
-                            app.time_offset_minutes -= 1;
-                            continue;
-                        }
-                        KeyCode::Char(']') => {
-                            app.time_offset_minutes += 10;
-                            continue;
-                        }
-                        KeyCode::Char('[') => {
-                            app.time_offset_minutes -= 10;
-                            continue;
-                        }
-                        KeyCode::Char('r') if app.password.is_empty() => {
-                            app.time_offset_minutes = 0;
-                            continue;
-                        }
-                        KeyCode::Right => {
-                            app.time_offset_minutes += 1;
-                            continue;
-                        }
-                        KeyCode::Left => {
-                            app.time_offset_minutes -= 1;
-                            continue;
-                        }
-                        _ => {}
-                    }
-                }
 
                 match key.code {
                     KeyCode::Up => {
@@ -341,12 +305,11 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
         ])
         .split(size);
 
-    let base_now = Local::now();
-    let display_time = base_now + chrono::Duration::minutes(app.time_offset_minutes);
+    let now = Local::now();
 
-    let date_str = display_time.format("%Y.%m.%d - %A").to_string();
-    let hours = display_time.hour();
-    let minutes = display_time.minute();
+    let date_str = now.format("%Y.%m.%d - %A").to_string();
+    let hours = now.hour();
+    let minutes = now.minute();
 
     // Date (above clock)
     let date_p = Paragraph::new(date_str)

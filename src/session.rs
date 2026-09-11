@@ -53,7 +53,6 @@ pub fn launch(
     });
 
     let mut session = PamSession::start(service, username, conv)?;
-    session.authenticate(PamFlag::NONE)?;
     session.acct_mgmt(PamFlag::NONE)?;
     session.setcred(PamFlag::ESTABLISH_CRED)?;
 
