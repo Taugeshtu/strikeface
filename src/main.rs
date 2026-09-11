@@ -244,18 +244,31 @@ fn run_loop<B: ratatui::backend::Backend>(
                                 let _ = event::read()?;
                             }
 
+                            match auth_res {
+                                Ok(Ok(())) => {
+                                    execute!(
+                                        io::stdout(),
+                                        crossterm::style::Print("\x1b]11;#f9f9f9\x1b\\")
+                                    )?;
+                                    app.state = AuthState::Success;
+                                    break Ok(());
+                                }
+                                Ok(Err(ref err)) if !matches!(err, pam::PamError::AuthError(_)) => {
+                                    show_system_error(terminal, &err.to_string())?;
+                                }
+                                Err(ref err) => {
+                                    show_system_error(terminal, &err.to_string())?;
+                                }
+                                _ => {}
+                            }
+
                             // Restore canvas background to off-white
                             execute!(
                                 io::stdout(),
                                 crossterm::style::Print("\x1b]11;#f9f9f9\x1b\\")
                             )?;
 
-                            if let Ok(Ok(())) = auth_res {
-                                app.state = AuthState::Success;
-                                break Ok(());
-                            }
-
-                            // 6. PAM failed -> reset password and focus
+                            // 6. Reset password and focus
                             app.password.zeroize();
                             app.focused = FocusedField::Password;
                         }
@@ -381,4 +394,49 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
 
     let pass_p = Paragraph::new(Line::from(pass_spans)).alignment(Alignment::Center);
     f.render_widget(pass_p, v_chunks[7]);
+}
+
+fn show_system_error<B: ratatui::backend::Backend>(
+    terminal: &mut Terminal<B>,
+    err: &str,
+) -> io::Result<()> {
+    terminal
+        .draw(|f| {
+            let area = f.area();
+            f.render_widget(Block::default().style(Style::default().bg(COLOR_RED)), area);
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Ratio(1, 3),
+                    Constraint::Min(3),
+                    Constraint::Ratio(1, 3),
+                ])
+                .split(area);
+            let text = vec![
+                Line::from(Span::styled(
+                    "PAM SYSTEM ERROR",
+                    Style::default().fg(COLOR_BG).add_modifier(Modifier::BOLD),
+                )),
+                Line::from(""),
+                Line::from(Span::styled(
+                    err.to_string(),
+                    Style::default().fg(COLOR_BG),
+                )),
+                Line::from(""),
+                Line::from(Span::styled(
+                    "[press any key to dismiss]",
+                    Style::default().fg(COLOR_BG).add_modifier(Modifier::DIM),
+                )),
+            ];
+            let p = Paragraph::new(text).alignment(Alignment::Center);
+            f.render_widget(p, chunks[1]);
+        })
+        .map_err(|e| io::Error::other(e.to_string()))?;
+
+    loop {
+        if let Event::Key(_) = event::read()? {
+            break;
+        }
+    }
+    Ok(())
 }
