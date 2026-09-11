@@ -1,7 +1,15 @@
+use zeroize::Zeroize;
+
 use crate::pam::{converse::Converse, session::PamSession, PamError};
 
 struct PasswordConv {
     password: String,
+}
+
+impl Drop for PasswordConv {
+    fn drop(&mut self) {
+        self.password.zeroize();
+    }
 }
 
 impl Converse for PasswordConv {

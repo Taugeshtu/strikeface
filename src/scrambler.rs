@@ -2,7 +2,8 @@
 // Copyright (C) 2019-2024 Kenny Levinsen
 // Licensed under GPL-3.0-or-later
 
-use std::{default::Default, ffi::CString};
+use std::ffi::CString;
+use zeroize::Zeroize;
 
 /// Scrambling overwrites a buffers content with the default value. Useful to
 /// avoid leaving behind a heap littered with old secrets.
@@ -10,24 +11,15 @@ pub trait Scrambler {
     fn scramble(&mut self);
 }
 
-impl<T: Default> Scrambler for Vec<T> {
+impl<T: Zeroize> Scrambler for Vec<T> {
     fn scramble(&mut self) {
-        let cap = self.capacity();
-        self.truncate(0);
-        for _ in 0..cap {
-            self.push(Default::default())
-        }
-        self.truncate(0);
+        self.zeroize();
     }
 }
 
 impl Scrambler for String {
     fn scramble(&mut self) {
-        let v = unsafe { self.as_mut_vec() };
-        for v_iter in v.iter_mut() {
-            *v_iter = 0
-        }
-        self.truncate(0);
+        self.zeroize();
     }
 }
 
@@ -38,7 +30,7 @@ impl Scrambler for CString {
             let mut offset = 0;
 
             while *ptr.offset(offset) != 0 {
-                *ptr.offset(offset).cast_mut() = 0;
+                std::ptr::write_volatile(ptr.offset(offset).cast_mut(), 0);
                 offset += 1;
             }
         }

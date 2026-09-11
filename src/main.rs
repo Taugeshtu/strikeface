@@ -40,12 +40,20 @@ enum AuthState {
     Success,
 }
 
+use zeroize::Zeroize;
+
 struct App {
     username: String,
     password: String,
     focused: FocusedField,
     state: AuthState,
     session: Option<String>,
+}
+
+impl Drop for App {
+    fn drop(&mut self) {
+        self.password.zeroize();
+    }
 }
 
 impl App {
@@ -103,7 +111,7 @@ fn main() -> io::Result<()> {
                 final_error = Some(format!("Error: {err}"));
                 break;
             }
-            app.password.clear();
+            app.password.zeroize();
             app.state = AuthState::Idle;
             app.focused = FocusedField::Password;
             continue;
@@ -127,7 +135,7 @@ fn main() -> io::Result<()> {
         }
 
         // Reset for next cycle
-        app.password.clear();
+        app.password.zeroize();
         app.state = AuthState::Idle;
         app.focused = FocusedField::Password;
     }
@@ -248,7 +256,7 @@ fn run_loop<B: ratatui::backend::Backend>(
                             }
 
                             // 6. PAM failed -> reset password and focus
-                            app.password.clear();
+                            app.password.zeroize();
                             app.focused = FocusedField::Password;
                         }
                     },
@@ -270,7 +278,7 @@ fn run_loop<B: ratatui::backend::Backend>(
                     },
                     KeyCode::Esc => {
                         if !app.password.is_empty() {
-                            app.password.clear();
+                            app.password.zeroize();
                         } else {
                             break Ok(());
                         }
